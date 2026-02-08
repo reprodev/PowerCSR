@@ -71,59 +71,69 @@ $password2 = Add-InputField $form 'Confirm Password:' 440 $true
 # Auto-Fill Function
 function Auto-FillDomainInfo {
     try {
-        # Get Windows geographic region country code from registry
-        try {
-            $geoKey = Get-ItemProperty -Path "HKCU:\Control Panel\International\Geo" -ErrorAction SilentlyContinue
-            if ($geoKey -and $geoKey.Nation) {
-                # Get the GeoId and convert it using .NET
-                $geoId = $geoKey.Nation
-                $cultures = [System.Globalization.CultureInfo]::GetCultures([System.Globalization.CultureTypes]::SpecificCultures)
-                foreach ($culture in $cultures) {
-                    $region = New-Object System.Globalization.RegionInfo($culture.Name)
-                    if ($region.GeoId -eq $geoId) {
-                        $country.Text = $region.TwoLetterISORegionName
-                        break
+        # Get Windows geographic region country code from registry (only if country field is empty)
+        if ([string]::IsNullOrWhiteSpace($country.Text)) {
+            try {
+                $geoKey = Get-ItemProperty -Path "HKCU:\Control Panel\International\Geo" -ErrorAction SilentlyContinue
+                if ($geoKey -and $geoKey.Nation) {
+                    # Get the GeoId and convert it using .NET
+                    $geoId = $geoKey.Nation
+                    $cultures = [System.Globalization.CultureInfo]::GetCultures([System.Globalization.CultureTypes]::SpecificCultures)
+                    foreach ($culture in $cultures) {
+                        $region = New-Object System.Globalization.RegionInfo($culture.Name)
+                        if ($region.GeoId -eq $geoId) {
+                            $country.Text = $region.TwoLetterISORegionName
+                            break
+                        }
                     }
                 }
-            }
-        } catch {
-            # Fallback to current region if registry lookup fails
-            try {
-                $regionInfo = [System.Globalization.RegionInfo]::CurrentRegion
-                $country.Text = $regionInfo.TwoLetterISORegionName
             } catch {
-                $country.Text = ""
+                # Fallback to current region if registry lookup fails
+                try {
+                    $regionInfo = [System.Globalization.RegionInfo]::CurrentRegion
+                    $country.Text = $regionInfo.TwoLetterISORegionName
+                } catch {
+                    # Silent fail for country
+                }
             }
         }
         
-        # Get domain information
+        # Get domain information (only populate if fields are empty)
         $hostname = [System.Net.Dns]::GetHostName()
         $domainName = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().DomainName
         
         if ($domainName) {
             $fqdn = "$hostname.$domainName"
-            $commonName.Text = $fqdn
+            if ([string]::IsNullOrWhiteSpace($commonName.Text)) {
+                $commonName.Text = $fqdn
+            }
             
             # Build SAN entries
-            $sanEntries = @()
-            $sanEntries += "DNS:$fqdn"
-            $sanEntries += "DNS:$hostname"
-            if ($domainName) {
-                $sanEntries += "DNS:$domainName"
+            if ([string]::IsNullOrWhiteSpace($sanTextBox.Text)) {
+                $sanEntries = @()
+                $sanEntries += "DNS:$fqdn"
+                $sanEntries += "DNS:$hostname"
+                if ($domainName) {
+                    $sanEntries += "DNS:$domainName"
+                }
+                
+                # Get local IP addresses (excluding loopback)
+                $ipAddresses = [System.Net.Dns]::GetHostAddresses($hostname) | 
+                    Where-Object { $_.AddressFamily -eq 'InterNetwork' -and $_.IPAddressToString -ne '127.0.0.1' }
+                
+                foreach ($ip in $ipAddresses) {
+                    $sanEntries += "IP:$($ip.IPAddressToString)"
+                }
+                
+                $sanTextBox.Text = $sanEntries -join ','
             }
-            
-            # Get local IP addresses (excluding loopback)
-            $ipAddresses = [System.Net.Dns]::GetHostAddresses($hostname) | 
-                Where-Object { $_.AddressFamily -eq 'InterNetwork' -and $_.IPAddressToString -ne '127.0.0.1' }
-            
-            foreach ($ip in $ipAddresses) {
-                $sanEntries += "IP:$($ip.IPAddressToString)"
-            }
-            
-            $sanTextBox.Text = $sanEntries -join ','
         } else {
-            $commonName.Text = $hostname
-            $sanTextBox.Text = "DNS:$hostname"
+            if ([string]::IsNullOrWhiteSpace($commonName.Text)) {
+                $commonName.Text = $hostname
+            }
+            if ([string]::IsNullOrWhiteSpace($sanTextBox.Text)) {
+                $sanTextBox.Text = "DNS:$hostname"
+            }
         }
     } catch {
         [System.Windows.Forms.MessageBox]::Show("Error auto-filling: $_", 'Error', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
