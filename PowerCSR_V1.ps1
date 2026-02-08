@@ -68,6 +68,68 @@ $form.Controls.Add($sanHelpLabel)
 $password1 = Add-InputField $form 'Password:' 395 $true
 $password2 = Add-InputField $form 'Confirm Password:' 440 $true
 
+# Auto-Fill Function
+function Auto-FillDomainInfo {
+    try {
+        # Get Windows geographic region country code from registry
+        try {
+            $geoKey = Get-ItemProperty -Path "HKCU:\Control Panel\International\Geo" -ErrorAction SilentlyContinue
+            if ($geoKey -and $geoKey.Nation) {
+                # Get the GeoId and convert it using .NET
+                $geoId = $geoKey.Nation
+                $cultures = [System.Globalization.CultureInfo]::GetCultures([System.Globalization.CultureTypes]::SpecificCultures)
+                foreach ($culture in $cultures) {
+                    $region = New-Object System.Globalization.RegionInfo($culture.Name)
+                    if ($region.GeoId -eq $geoId) {
+                        $country.Text = $region.TwoLetterISORegionName
+                        break
+                    }
+                }
+            }
+        } catch {
+            # Fallback to current region if registry lookup fails
+            try {
+                $regionInfo = [System.Globalization.RegionInfo]::CurrentRegion
+                $country.Text = $regionInfo.TwoLetterISORegionName
+            } catch {
+                $country.Text = ""
+            }
+        }
+        
+        # Get domain information
+        $hostname = [System.Net.Dns]::GetHostName()
+        $domainName = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().DomainName
+        
+        if ($domainName) {
+            $fqdn = "$hostname.$domainName"
+            $commonName.Text = $fqdn
+            
+            # Build SAN entries
+            $sanEntries = @()
+            $sanEntries += "DNS:$fqdn"
+            $sanEntries += "DNS:$hostname"
+            if ($domainName) {
+                $sanEntries += "DNS:$domainName"
+            }
+            
+            # Get local IP addresses (excluding loopback)
+            $ipAddresses = [System.Net.Dns]::GetHostAddresses($hostname) | 
+                Where-Object { $_.AddressFamily -eq 'InterNetwork' -and $_.IPAddressToString -ne '127.0.0.1' }
+            
+            foreach ($ip in $ipAddresses) {
+                $sanEntries += "IP:$($ip.IPAddressToString)"
+            }
+            
+            $sanTextBox.Text = $sanEntries -join ','
+        } else {
+            $commonName.Text = $hostname
+            $sanTextBox.Text = "DNS:$hostname"
+        }
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show("Error auto-filling: $_", 'Error', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+    }
+}
+
 # SAN Validation Function
 function Validate-SAN {
     param([string]$sanInput)
@@ -105,7 +167,21 @@ function Validate-SAN {
     return @{ Valid = $true; Message = '' }
 }
 
-# Create a button 
+# Create Auto-Fill button
+$autoFillButton = New-Object System.Windows.Forms.Button
+$autoFillButton.Location = New-Object System.Drawing.Point(50,595)
+$autoFillButton.Size = New-Object System.Drawing.Size(150,30)  
+$autoFillButton.Text = 'Auto-Fill'
+$autoFillButton.Font = New-Object System.Drawing.Font("Arial", 12)
+
+# Add click event for Auto-Fill
+$autoFillButton.Add_Click({
+    Auto-FillDomainInfo
+})
+
+$form.Controls.Add($autoFillButton)
+
+# Create Generate CSR button 
 $button = New-Object System.Windows.Forms.Button
 $button.Location = New-Object System.Drawing.Point(225,595)
 $button.Size = New-Object System.Drawing.Size(150,30)  
